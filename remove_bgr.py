@@ -1,58 +1,9 @@
-import tkinter as tk
-from tkinter import filedialog
-from rembg import remove
-import cv2
+import streamlit as st
 import numpy as np
-import os
-
-def select_files():
-    file_paths = filedialog.askopenfilenames(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.webp")])
-    if file_paths:
-        entry_files.delete(0, tk.END)
-        entry_files.insert(0, ", ".join(file_paths))
-
-def select_output_folder():
-    folder_path = filedialog.askdirectory()
-    if folder_path:
-        entry_output.delete(0, tk.END)
-        entry_output.insert(0, folder_path)
-
-def remove_background():
-    input_paths = entry_files.get().split(", ")
-    output_folder = entry_output.get()
-    save_as_png = var_png.get()
-    save_as_jpg = var_jpg.get()
-
-    if not input_paths or not output_folder or (not save_as_png and not save_as_jpg):
-        lbl_status.config(text="파일, 저장 경로, 변환 형식을 선택하세요!", fg="red")
-        return
-
-    try:
-        for input_path in input_paths:
-            with open(input_path, 'rb') as inp_file:
-                img_data = inp_file.read()
-            
-            output = remove(img_data)
-            nparr = np.frombuffer(output, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-            
-            img = refine_alpha_channel(img)
-            img = remove_object_outline(img)
-
-            file_name = os.path.basename(input_path).split('.')[0]
-            
-            if save_as_png:
-                output_path_png = os.path.join(output_folder, f"{file_name}_no_bg.png")
-                cv2.imwrite(output_path_png, img)
-            
-            if save_as_jpg:
-                img_jpg = convert_to_white_background(img)
-                output_path_jpg = os.path.join(output_folder, f"{file_name}_no_bg.jpg")
-                cv2.imwrite(output_path_jpg, img_jpg, [cv2.IMWRITE_JPEG_QUALITY, 95])
-
-        lbl_status.config(text=f"배경 제거 완료! {len(input_paths)}개 파일 처리 완료.", fg="green")
-    except Exception as e:
-        lbl_status.config(text=f"오류 발생: {e}", fg="red")
+import cv2
+from rembg import remove
+from io import BytesIO
+from PIL import Image
 
 def refine_alpha_channel(img):
     if img.shape[2] == 4:
@@ -92,30 +43,62 @@ def convert_to_white_background(img):
         return white_bg
     return img
 
-# GUI 설정
-root = tk.Tk()
-root.title("고기 배경 제거 프로그램")
-root.geometry("500x400")
+# Streamlit UI 구성
+st.title("🔥 배경 제거 프로그램 (Streamlit)")
 
-tk.Label(root, text="이미지 파일 선택 (여러 개 가능):").pack()
-entry_files = tk.Entry(root, width=60)
-entry_files.pack()
-tk.Button(root, text="파일 찾기", command=select_files).pack()
+# 파일 업로드
+uploaded_files = st.file_uploader("이미지 파일 업로드 (여러 개 가능)", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True)
 
-tk.Label(root, text="저장할 폴더 선택:").pack()
-entry_output = tk.Entry(root, width=60)
-entry_output.pack()
-tk.Button(root, text="폴더 선택", command=select_output_folder).pack()
+# 변환 옵션
+save_as_png = st.checkbox("PNG로 저장 (투명 배경 유지)", value=True)
+save_as_jpg = st.checkbox("JPG로 저장 (흰색 배경 적용)", value=False)
 
-# 출력 형식 선택
-var_png = tk.BooleanVar(value=True)
-var_jpg = tk.BooleanVar(value=False)
-tk.Checkbutton(root, text="PNG로 저장 (투명 배경 유지)", variable=var_png).pack()
-tk.Checkbutton(root, text="JPG로 저장 (흰색 배경 적용)", variable=var_jpg).pack()
+# 변환 실행
+if st.button("배경 제거 실행"):
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            try:
+                # 이미지 읽기
+                image = Image.open(uploaded_file).convert("RGBA")
+                img_data = uploaded_file.getvalue()
+                
+                # 배경 제거
+                output = remove(img_data)
+                nparr = np.frombuffer(output, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
 
-tk.Button(root, text="배경 제거 실행", command=remove_background, bg="blue", fg="white").pack(pady=10)
+                # 후처리 (알파 채널 개선 및 아웃라인 제거)
+                img = refine_alpha_channel(img)
+                img = remove_object_outline(img)
 
-lbl_status = tk.Label(root, text="", fg="black")
-lbl_status.pack()
+                # 파일 이름 처리
+                file_name = uploaded_file.name.rsplit('.', 1)[0]
 
-root.mainloop()
+                # PNG 저장 (투명 배경 유지)
+                if save_as_png:
+                    png_bytes = cv2.imencode(".png", img)[1].tobytes()
+                    st.download_button(
+                        label=f"{file_name}_no_bg.png 다운로드",
+                        data=BytesIO(png_bytes),
+                        file_name=f"{file_name}_no_bg.png",
+                        mime="image/png"
+                    )
+
+                # JPG 저장 (흰색 배경 적용)
+                if save_as_jpg:
+                    img_jpg = convert_to_white_background(img)
+                    jpg_bytes = cv2.imencode(".jpg", img_jpg, [cv2.IMWRITE_JPEG_QUALITY, 95])[1].tobytes()
+                    st.download_button(
+                        label=f"{file_name}_no_bg.jpg 다운로드",
+                        data=BytesIO(jpg_bytes),
+                        file_name=f"{file_name}_no_bg.jpg",
+                        mime="image/jpeg"
+                    )
+
+                st.success(f"✅ {file_name} 배경 제거 완료!")
+
+            except Exception as e:
+                st.error(f"❌ 오류 발생: {e}")
+
+    else:
+        st.warning("⚠️ 파일을 업로드하세요!")
